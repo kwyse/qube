@@ -1,20 +1,36 @@
+extern crate hyper;
 extern crate pulldown_cmark;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
+use hyper::{Body, Response, Server};
+use hyper::rt::{self, Future};
+use hyper::service::service_fn_ok;
 use pulldown_cmark::{html, Parser};
 
 const ARTICLES_PATH: &str = "./articles";
 
 fn main() {
-    for file in &enrich_files() {
-        println!("{}\n", parse_markdown(file));
-    }
+    let new_svc = move || {
+        service_fn_ok(|req| Response::new(Body::from(
+            enrich_files().get(req.uri().path().trim_matches('/'))
+                .map(parse_markdown)
+                .unwrap_or("Nothing here! Best write something!".to_string())
+            ))
+        )};
+
+    let address = ([127, 0, 0, 1], 3000).into();
+    let server = Server::bind(&address)
+        .serve(new_svc)
+        .map_err(|err| eprintln!("Server error: {}", err));
+
+    rt::run(server);
 }
 
-fn parse_markdown(markdown: &str) -> String {
+fn parse_markdown(markdown: &String) -> String {
     let parser = Parser::new(markdown);
     let mut buf = String::new();
     html::push_html(&mut buf, parser);
@@ -22,8 +38,8 @@ fn parse_markdown(markdown: &str) -> String {
     buf
 }
 
-fn enrich_files() -> Vec<String> {
-    let mut enriched_files = Vec::new();
+fn enrich_files() -> HashMap<String, String> {
+    let mut enriched_files = HashMap::new();
 
     let filenames = determine_links();
     for filename in &filenames {
@@ -38,7 +54,7 @@ fn enrich_files() -> Vec<String> {
                 .collect::<Vec<String>>();
 
             let enriched_file = add_hyperlinks(&contents, &links_excluding_current);
-            enriched_files.push(enriched_file);
+            enriched_files.insert(filename.to_string(), enriched_file);
         }
     }
 
@@ -48,7 +64,7 @@ fn enrich_files() -> Vec<String> {
 fn add_hyperlinks(contents: &str, links: &[String]) -> String {
     let mut hyperlinked_contents = contents.to_string();
     for link in links {
-        let hyperlink = format!("[{}]({}/{}.md)", link, ARTICLES_PATH, link.replace(" ", "_"));
+        let hyperlink = format!("[{}]({})", link, link.replace(" ", "_"));
         hyperlinked_contents = hyperlinked_contents.replacen(link, &hyperlink, 1);
     }
 
@@ -100,7 +116,6 @@ mod tests {
 
     #[test]
     fn populated_contents_with_matching_link_returns_hyperlinked_contents() {
-        let expected = format!("[link]({}/link.md)", ARTICLES_PATH);
-        assert_eq!(add_hyperlinks("link", &["link".to_string()]), expected);
+        assert_eq!(add_hyperlinks("link", &["link".to_string()]), "[link](link)".to_string());
     }
 }
