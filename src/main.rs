@@ -1,4 +1,3 @@
-extern crate hyper;
 extern crate pulldown_cmark;
 
 use std::collections::HashMap;
@@ -6,28 +5,20 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
-use hyper::{Body, Response, Server};
-use hyper::rt::{self, Future};
-use hyper::service::service_fn_ok;
 use pulldown_cmark::{html, Parser};
+
+mod server;
 
 const ARTICLES_PATH: &str = "./articles";
 
 fn main() {
-    let new_svc = move || {
-        service_fn_ok(|req| Response::new(Body::from(
-            enrich_files().get(req.uri().path().trim_matches('/'))
-                .map(parse_markdown)
-                .unwrap_or("Nothing here! Best write something!".to_string())
-            ))
-        )};
+    server::serve("localhost:12333", find_article).expect("stuff");
+}
 
-    let address = ([127, 0, 0, 1], 3000).into();
-    let server = Server::bind(&address)
-        .serve(new_svc)
-        .map_err(|err| eprintln!("Server error: {}", err));
-
-    rt::run(server);
+fn find_article(path: &str) -> String {
+    enrich_files().get(path.trim_matches('/'))
+        .map(parse_markdown)
+        .unwrap_or("Nothing here! Best write something!".to_string())
 }
 
 fn parse_markdown(markdown: &String) -> String {

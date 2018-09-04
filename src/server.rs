@@ -1,7 +1,22 @@
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{ToSocketAddrs, TcpListener};
+use std::thread;
+
 #[derive(Debug)]
 struct Request {
     path: String,
-    body: String,
+}
+
+impl Request {
+    fn new(request_str: &str) -> Self {
+        request_str.lines()
+            .next()
+            .map(str::split_whitespace)
+            .and_then(|mut parts| parts.nth(1))
+            .map(ToString::to_string)
+            .map(|path| Request { path })
+            .unwrap_or(Request { path: "".to_string() })
+    }
 }
 
 #[derive(Debug)]
@@ -23,15 +38,12 @@ impl ToString for Response {
     }
 }
 
-use std::io;
-use std::thread;
-
-pub fn serve<F: FnOnce(&str) -> String + Send + Sync + 'static + Copy>(callback: F) -> io::Result<()> {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::io::{BufRead, BufReader};
-
-    let listener = TcpListener::bind("127.0.0.1:12343")?;
+pub fn serve<A, F>(addr: A, callback: F) -> io::Result<()>
+where
+    A: ToSocketAddrs,
+    F: FnOnce(&str) -> String + Copy + Send + Sync + 'static
+{
+    let listener = TcpListener::bind(addr)?;
     for stream in listener.incoming().filter_map(Result::ok) {
         thread::spawn(move || {
             let mut reader = BufReader::new(stream);
@@ -40,7 +52,7 @@ pub fn serve<F: FnOnce(&str) -> String + Send + Sync + 'static + Copy>(callback:
                 .take_while(|line| !line.is_empty())
                 .collect::<String>();
 
-            let request = parse_request(&headers);
+            let request = Request::new(&headers);
             let response_body = &callback(&request.path);
             let response = Response::new(&response_body);
 
@@ -53,34 +65,29 @@ pub fn serve<F: FnOnce(&str) -> String + Send + Sync + 'static + Copy>(callback:
     Ok(())
 }
 
-fn parse_request(request: &str) -> Request {
-    let mut request_parts = request.splitn(2, "\r\n\r\n");
-
-    let mut path = "".to_string();
-    let mut body = "".to_string();
-
-    if let Some(request_line_and_headers) = request_parts.next() {
-        let mut parts = request_line_and_headers.lines();
-        if let Some(request_line) = parts.next() {
-            if let Some(request_path) = request_line.split(" ").nth(1) {
-                path = request_path.to_string();
-            }
-        }
-    }
-
-    if let Some(request_body) = request_parts.next() {
-        body = request_body.to_string();
-    }
-
-    Request { path, body }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_path_in_request() {
+    fn parse_path_in_request_when_it_is_missing() {
+        let request_line = "GET";
+        let headers = ["Host: localhost"];
+        let terminator = "\r\n\r\n";
+
+        let mut request_line_and_headers = Vec::new();
+        request_line_and_headers.push(request_line);
+        request_line_and_headers.extend(&headers);
+        request_line_and_headers.push(terminator);
+
+        let request_string = request_line_and_headers.join("\r\n");
+        let request = Request::new(&request_string);
+
+        assert_eq!(request.path, "".to_string());
+    }
+
+    #[test]
+    fn parse_path_in_request_when_it_is_populated() {
         let request_line = "GET /path HTTP/1.1";
         let headers = ["Host: localhost"];
         let terminator = "\r\n\r\n";
@@ -91,27 +98,9 @@ mod tests {
         request_line_and_headers.push(terminator);
 
         let request_string = request_line_and_headers.join("\r\n");
-        let request = parse_request(&request_string);
+        let request = Request::new(&request_string);
 
         assert_eq!(request.path, "/path".to_string());
-    }
-
-    #[test]
-    fn parse_body_in_request() {
-        let request_line = "GET /path HTTP/1.1";
-        let headers = ["Host: localhost"];
-        let terminator = "\r\n";
-
-        let mut request_line_and_headers = Vec::new();
-        request_line_and_headers.push(request_line);
-        request_line_and_headers.extend(&headers);
-        request_line_and_headers.push(terminator);
-
-        let body = r#"{"message": "some JSON message"}"#;
-        let request_string = request_line_and_headers.join("\r\n") + body;
-        let request = parse_request(&request_string);
-
-        assert_eq!(request.body, r#"{"message": "some JSON message"}"#.to_string());
     }
 
     #[test]
@@ -125,11 +114,10 @@ mod tests {
         request_line_and_headers.extend(&headers);
         request_line_and_headers.push(terminator);
 
-        let body = r#"{"message": "some JSON message"}"#;
-        let request_string = request_line_and_headers.join("\r\n") + body;
-        let request = parse_request(&request_string);
+        let request_string = request_line_and_headers.join("\r\n");
+        let request = Request::new(&request_string);
 
-        let response = Response::new(&request.body);
+        let response = Response::new(&request.path);
         let response_str = response.to_string();
         let mut lines = response_str.lines();
 
@@ -138,6 +126,6 @@ mod tests {
         assert!(lines.next().unwrap().is_empty());
 
         let response_body = lines.collect::<String>();
-        assert_eq!(response_body, r#"{"message": "some JSON message"}"#.to_string());
+        assert_eq!(response_body, "/path".to_string());
     }
 }
