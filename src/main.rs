@@ -12,7 +12,10 @@ mod server;
 const ARTICLES_PATH: &str = "./articles";
 
 fn main() {
-    server::serve("localhost:12333", find_article).expect("stuff");
+    let address = "localhost:12333";
+    println!("Serving knowledge at {}!", address);
+
+    server::serve(address, find_article).expect("stuff");
 }
 
 fn find_article(path: &str) -> String {
