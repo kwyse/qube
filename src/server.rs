@@ -34,7 +34,12 @@ impl Response {
 
 impl ToString for Response {
     fn to_string(&self) -> String {
-        ["HTTP/1.1 200 OK", "Connection: close"].join("\r\n") + "\r\n\r\n" + &self.body
+        let html_wrapper = include_str!("../index.html");
+        let css = include_str!("../style.css");
+
+        let body = html_wrapper.replace("{{ style }}", css).replace("{{ body }}", &self.body);
+
+        ["HTTP/1.1 200 OK", "Connection: close"].join("\r\n") + "\r\n\r\n" + &body
     }
 }
 
@@ -125,7 +130,10 @@ mod tests {
         assert_eq!(lines.next().unwrap(), "Connection: close".to_string());
         assert!(lines.next().unwrap().is_empty());
 
-        let response_body = lines.collect::<String>();
-        assert_eq!(response_body, "/path".to_string());
+        let expected = include_str!("../index.html")
+            .replace("{{ style }}", include_str!("../style.css"))
+            .replace("{{ body }}", "/path")
+            .replace("\n", "");
+        assert_eq!(lines.collect::<String>(), expected);
     }
 }
